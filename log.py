@@ -1,36 +1,26 @@
-﻿#coding=utf-8
 import flumethrift 
 import xml.dom.minidom
-import threading
 import time
 import datetime
 import Queue
-
-          
-
-g_queue = Queue.Queue()
-
+import multiprocessing
+g_process_runing = multiprocessing.Value('i',1)
+g_queue =multiprocessing.Queue()
+g_lock = multiprocessing.Lock()
+g_prlist = []
+g_logbuffer = []
 class Log(object):
-      def __init__(self,bufferlength = 1000,logbuffer = None,confpath = "../etc/serverconf/flume_log.xml",asyn = False):
+      def __init__(self,bufferlength = 1000,logbuffer = None,confpath = "flume_log.xml",asyn = False):
           self._log_batch = bufferlength
           self._logbuffer = []
           self._clientlist = []
           self._confpath = confpath
           self.load_config(self._confpath)
           self.idx = 0
-          self._asyn = asyn
-
-                      
-      
-          
-                 
+          self._asyn = False
       def _get_date_time_str(self):
-          Atime=datetime.datetime.now().microsecond/1000   
-          Btime=time.strftime("%Y-%m-%d %H:%M:%S",time.localtime()) 
-          strtime = str(Btime)+':'+str(Atime) 
+          strtime =datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
           return strtime
-
-
 
 
       def _set_log_batch(self,lenth):
@@ -71,51 +61,10 @@ class Log(object):
 
       def is_enable(self):
           return True
+      
 
-
-      def set_asyn(self,asyn): 
-          self._asyn = asyn
-          self._thread_runing = True
-          num = len(self._clientlist)
-          id = 0
-          self._queue = Queue.Queue() 
-          while(id < num):
-             pr = threading.Thread(target = Log.write_thread,args=(self,id))
-             pr.start()
-             id = id+1
-
-
-
-
-
-      def write_thread(self,id):
-          while self._thread_runing:
-            if g_queue.qsize() > self._log_batch:
-                i = 0
-                strevents = []
-                while(i < self._log_batch):
-                 strevents.append(g_queue.get())
-                 i = i+1
-                self._clientlist[id].send_event_batch(strevents)
-
-          while(g_queue.qsize() > self._log_batch):
-            strevents = []
-            i = 0
-            while i < self._log_batch:
-             tupl = g_queue.get()
-             strevents.append(tupl)
-             i=i+1
-            self._clientlist[id].send_event_batch(strevents)
-
-
-          strevents = []
-          while(g_queue.qsize() > 0):
-           tupl = g_queue.get()
-           strevents.append(tupl)
-          self._clientlist[id].send_event_batch(strevents)
-        
-      def stop_asyn(self):
-          self._thread_runing = False
+     
+     
 
 
       def wirte(self,strs,arg):
@@ -130,4 +79,106 @@ class Log(object):
                  self.idx = self.idx+1
                  self._logbuffer = []
           else:
-               g_queue.put(str3)
+              global g_logbuffer
+              g_logbuffer.append(str3)
+              if len(g_logbuffer) >= self._log_batch:
+                 g_queue.put(g_logbuffer,False)
+                 g_logbuffer = []
+     
+      def set_asyn(self,asyn):
+          self._asyn = asyn
+          if asyn :
+            g_process_runing.value = 1 #共享变量
+            num = len(self._clientlist)
+            id = 0
+            while(id < num):
+               pr = multiprocessing.Process(target = write_Process,args=(g_lock,g_queue,id,g_process_runing))
+               pr.start()
+               id = id+1
+               g_prlist.append(pr)
+      def stop_asyn(self):
+           g_process_runing.value = 0
+           for pr in g_prlist:
+            pr.join()  
+           g_queue.close()
+
+
+def write_Process(g_lock,g_queue,id,g_process_runing): 
+#####加锁实现方法 每次put log_batch个str
+    log = Log()
+    while g_process_runing.value:
+      try:
+          strevents = g_queue.get(False)
+          if strevents:
+              log._clientlist[id].send_event_batch(strevents)
+              strevents = []
+      except Queue.Empty:
+                   pass
+    while not g_queue.empty():
+        try:
+            strevents = g_queue.get(False)
+            if strevents:
+                log._clientlist[id].send_event_batch(strevents)
+                strevents = []
+        except Queue.Empty:
+                     pass
+
+####加锁的多线程是使用方法，加锁的原因是因为每次put的是一个str，而不是上面实现的每次put log_batch个str    
+  #log = Log()   
+  #while(1):
+  #  g_lock.acquire()
+  #  queue_size = g_queue.qsize()
+  #  sendcount = log._log_batch
+  #  if g_process_runing.value:
+  #      if queue_size < log._log_batch:
+  #         g_lock.release()
+  #         continue
+  #  else:
+  #      if queue_size <= 0:
+  #         g_lock.release()
+  #         break    
+  #      if queue_size < log._log_batch:
+  #         sendcount = queue_size
+  #  strevents=[]          
+  #  for i in xrange(sendcount):
+  #     tupl = g_queue.get()
+  #     strevents.append(tupl)
+  #  g_lock.release()
+  #  log._clientlist[id].send_event_batch(strevents)
+
+
+#####另一种实现方法，不加锁，而每次put的也是一个str
+#strevents = []
+#log = Log()
+#while 1:
+#  if g_process_runing.value:
+#     try: 
+#        strevents.append(g_queue.get(False))
+#     except Queue.Empty:
+#          pass
+#     if len(strevents) >= log._log_batch:
+#        log._clientlist[id].send_event_batch(strevents)
+#        strevents =[] 
+#  else:
+#       if strevents:
+#          log._clientlist[id].send_event_batch(strevents)
+#          strevents = []
+#       if g_queue.empty():
+#          break;
+#       else:
+#           while 1:
+#               try: 
+#                  strevents.append(g_queue.get(False))
+#               except Queue.Empty:
+#                    break
+#               if len(strevents) >= log._log_batch:
+#                  log._clientlist[id].send_event_batch(strevents)
+#                  strevents =[] 
+#           if strevents:
+#               log._clientlist[id].send_event_batch(strevents)
+#           break
+
+          
+
+
+        
