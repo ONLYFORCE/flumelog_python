@@ -1,5 +1,6 @@
-﻿import log
+import log
 import sys
+
 loglevelinfo ={'LOG_LEVEL_FATAL':0, 'LOG_LEVEL_ALERT':1,'LOG_LEVEL_ERR':2,'LOG_LEVEL_WARN':3,'LOG_LEVEL_INFO':4, 'LOG_LEVEL_DEBUG':5}
 
 class ErrLog(log.Log):
