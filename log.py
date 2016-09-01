@@ -22,8 +22,8 @@ class Log(object):
           self.idx = 0
           self._asyn = False
       def _get_date_time_str(self):
-          strtime =datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-          return strtime
+          #strtime =datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+          return timestr.GetDateTimeStr()
 
 
       def _set_log_batch(self,lenth):
