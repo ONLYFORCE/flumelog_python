@@ -1,3 +1,6 @@
+import sys
+sys.path.append('./swig')
+import timestr
 import flumethrift 
 import xml.dom.minidom
 import time
