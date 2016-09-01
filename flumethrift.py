@@ -69,7 +69,6 @@ class FlumeClient(object):
             print(e)  
         finally:  
             self._transObj.connect()  
-      
     def send_event_batch(self, strevents):  
         try: 
             self._transObj.connect()  
